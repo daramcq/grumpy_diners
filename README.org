@@ -1,0 +1,287 @@
+* Introduction
+Welcome to Grumpy Diner Inc.! The world's only relational dining chain. We've been having problems with customer satisfaction recently and it's really hitting our bottom line. We created a new customer complaints process to gather information, but, well,there's a lot of complaints! Let's see if we can use SQL to put some manners on our data.
+* Setup
+First we'd better get our database in order. Run
+#+BEGIN_SRC sql
+CREATE DATABASE diner;
+#+END_SRC
+And then:
+#+BEGIN_SRC sql
+CONNECT diner;
+#+END_SRC
+** Creating the tables
+Now we'd better create the tables. We'll just have two - a table for customer orders and a table for customer complaints.
+*** Orders table
+Right now, we only need an ID field, a customer name and a created_at. Maybe we'll add some more information later.
+#+BEGIN_SRC sql
+CREATE TABLE `orders` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `customer_name` varchar(200) DEFAULT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+)
+#+END_SRC
+*** Customer complaints
+Customer complaints need to contain the issue of complaint and the the order the issue was experienced on. So we need to have an ID field, an order_id to reference the order and an issue. We are going to allow multiple complaints per order. It seems like our customers have a lot they want to get off their shoulders.
+#+BEGIN_SRC sql
+CREATE TABLE `customer_complaints` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `order_id` int(11) DEFAULT NULL,
+  `issue` varchar(200) NOT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `order_id` (`order_id`),
+  CONSTRAINT `customer_complaints_ibfk_1` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`)
+)
+#+END_SRC
+** Digression - Generating data for our tables
+So, we don't have all the customer complaints in yet. But let's generate some random data so we can get our queries ready to handle the influx when it comes. We're going to go through this step by step, so feel free to skip ahead if you're more interested in the queries.
+*** Explaining the statements
+We want to create random records for our database. For the customer orders, we just need to add a certain number of customer names. The other fields are auto-generated. So we're going to create customer names by choosing random first and last names from lists of first and last names.
+**** Our customer create statement
+This is what our customer create statement looks like.
+#+BEGIN_SRC sql
+INSERT INTO orders (customer_name) 
+-> VALUES (CONCAT(ELT(FLOOR(1 + RAND() * 5), 'jim', 'jemma', 'jonah', 'jemimah', 'jessica'), 
+-> ' ', ELT(FLOOR(1+RAND() * 5), 'justin', 'jones', 'joplin', 'jefferson', 'jilpers')
+-> ))
+#+END_SRC
+Not sure what's going on here? Let's take it step by step.
+**** Selecting an element from a list
+If we have a list of names, and we want to choose one of them, we can use the [[https://dev.mysql.com/doc/refman/8.0/en/string-functions.html#function_elt][ELT function]]. This selects the /ith/ element from a list, where /i/ is the index. We can see this with a test function:
+#+BEGIN_SRC sql
+> SELECT ELT(2, 'a', 'b', 'c') AS letter;
++--------+
+| letter |
++--------+
+| b      |
++--------+
+#+END_SRC
+So far, so simple. But what about choosing a random element?
+**** Getting a random number
+The [[https://dev.mysql.com/doc/refman/8.0/en/mathematical-functions.html#function_rand][RAND function]] returns a random floating point number between 0 and 1.
+#+BEGIN_SRC sql
+> SELECT RAND() AS random;
++--------------------+
+| random             |
++--------------------+
+| 0.7003860303204377 |
++--------------------+
+#+END_SRC
+A little more work is needed if we want to use this to select an element from a list. If we multiply the random number by an integer n, we will get a result i, where 0 <= i <= n. By using the floor function and adding one, we can get a random integer between 1 and n. Here's an example using a subquery to show the random number and the normalised number side by side.
+#+BEGIN_SRC sql
+> SELECT random.random, FLOOR(1 + random.random) AS floor_plus_one FROM (SELECT (RAND() * 5) AS random) AS random;
++--------------------+----------------+
+| random             | floor_plus_one |
++--------------------+----------------+
+| 1.1918496584443838 |              2 |
++--------------------+----------------+
+#+END_SRC
+**** A random element
+We can combine these to choose a random element from a list.
+#+BEGIN_SRC sql
+> SELECT ELT(FLOOR(1 + RAND() * 5), 'a', 'b', 'c', 'd', 'e') AS letter;
++--------+
+| letter |
++--------+
+| b      |
++--------+
+#+END_SRC
+**** A random name
+So that's enough to generate a random name, once we use CONCAT to munge a random first and last name together.
+#+BEGIN_SRC sql
+SELECT CONCAT(ELT(FLOOR(1 + RAND() * 5), 'jim', 'jemma', 'jonah', 'jemimah', 'jessica'), 
+-> ' ', 
+-> ELT(FLOOR(1+RAND() * 5), 'smith', 'jones', 'joplin', 'jefferson', 'jilpers')) 
+  AS name;
++---------------+
+| name          |
++---------------+
+| jemma jilpers |
++---------------+
+#+END_SRC
+**** A customer create statement
+We can throw this into an INSERT statement as below to generate a random order record.
+#+BEGIN_SRC sql
+INSERT INTO orders (customer_name) VALUES (CONCAT(ELT(FLOOR(1 + RAND() * 5), 'jim', 'jemma', 'jonah', 'jemimah', 'jessica'), ' ', ELT(FLOOR(1+RAND() * 5), 'justin', 'jones', 'joplin', 'jefferson', 'jilpers')))
+#+END_SRC
+**** Handling repetition with a stored procedure
+But we have a lot of customers in Grumpy Diner, so we need to add a lot of customers into our database. As we are doing things in pure SQL, let's create our sample data with stored procedures. For this, we need to wrap our insert statement in a loop, all part of a procedure. The procedure takes a parameter ~numOrders~ and increments a counter until it reaches this parameter.
+#+BEGIN_SRC sql
+DELIMITER //
+CREATE PROCEDURE add_orders(IN numOrders INT)
+BEGIN
+DECLARE x INT;
+SET x = 0;
+insert_loop: LOOP
+IF x >= numOrders
+THEN LEAVE insert_loop;
+END IF;
+SET x = x + 1;
+INSERT INTO orders (customer_name) VALUES (CONCAT(ELT(FLOOR(1 + RAND() * 5), 'jim', 'jemma', 'jonah', 'jemimah', 'jessica'), ' ', ELT(FLOOR(1+RAND() * 5), 'justin', 'jones', 'joplin', 'jefferson', 'jilpers')));
+ITERATE insert_loop;
+END LOOP;
+END //
+DELIMITER ;
+#+END_SRC
+Calling this will create order records for us.
+#+BEGIN_SRC sql
+> CALL add_orders(100);
+#+END_SRC
+*** Adding customer complaints
+Right, so all those customer orders have been generated. Unfortunately, the customers have a lot of complaints for their orders. We'd better add those in. So the first thing is that each row we add needs to reference a customer order. So let's do that with our old friend Rand.
+#+BEGIN_SRC sql
+SELECT id FROM orders ORDER BY rand() LIMIT 1;
+#+END_SRC
+To incorporate this into an INSERT statement on the customer_complaints table, we can do the following:
+#+BEGIN_SRC sql
+INSERT INTO customer_complaints (order_id, issue) 
+-> VALUES ((SELECT id FROM orders ORDER BY rand() LIMIT 1), 'clamourous mastication')
+#+END_SRC
+Clearly this customer was bothered by the noisome chewing of their fellow-diner. Important information. But we don't want to do this that many times, and we also know that not all customers are going to have the same problem. A few of them even might not have any complaints at all! Well, let's not get carried away with ourselves. First let's give some more complaint reasons, using some of our old tricks to randomise them.
+#+BEGIN_SRC sql
+INSERT INTO customer_complaints (order_id, issue) 
+-> VALUES ((SELECT id FROM orders ORDER BY rand() LIMIT 1), 
+-> ELT(FLOOR(1 + RAND() * 5), 'clamourous mastication', 'churlish servitor', 'tardy conveyance', 'unpalatable repast', 'slovenly decor')
+#+END_SRC
+So, we have some improvements to make, fine! Now we need another stored procedure to build the dataset.
+#+BEGIN_SRC sql
+DELIMITER //
+CREATE PROCEDURE add_complaints(IN numComplaints INT)
+BEGIN
+DECLARE x INT;
+SET x = 0;
+insert_loop: LOOP
+IF x >= numComplaints
+THEN LEAVE insert_loop;
+END IF;
+SET x = x + 1;
+INSERT INTO customer_complaints (order_id, issue) VALUES ((SELECT id FROM orders ORDER BY rand() LIMIT 1), ELT(FLOOR(1 + RAND() * 6), 'clamourous mastication', 'churlish servitor', 'tardy conveyance', 'unpalatable repast', 'slovenly decor', 'none'));
+ITERATE insert_loop;
+END LOOP;
+END //
+DELIMITER ;
+#+END_SRC
+And there we have it. A replete record of disrepute! So let's get querying. Oh! One omission! The idea behind the 'none' field was that a complaint with 'none' meant that that order had no problems. It was, by the very particular standards of our diner, the perfect order. The ideal! So we shouldn't have orders that have both 'none' and other issues. We don't have an easy way to stop that happening yet, so let's check out the scale of the problem.
+#+BEGIN_SRC sql
+SELECT id, order_id, issue FROM customer_complaints WHERE order_id IN (SELECT DISTINCT order_id FROM customer_complaints WHERE issue = 'none');
++----+----------+------------------------+
+| id | order_id | issue                  |
++----+----------+------------------------+
+|  7 |       98 | none                   |
+| 13 |       98 | none                   |
+| 15 |       68 | none                   |
+| 24 |       56 | none                   |
+| 23 |       69 | tardy conveyance       |
+| 29 |       69 | none                   |
+| 34 |       10 | none                   |
+| 53 |       10 | unpalatable repast     |
+|  1 |       97 | clamourous mastication |
+| 44 |       97 | none                   |
+| 47 |       90 | none                   |
++----+----------+------------------------+
+#+END_SRC
+So that's a little silly. Let's first tidy those rows up and berate our underlings later.
+#+BEGIN_SRC sql
+DELETE FROM customer_complaints WHERE id IN (7, 23, 44);
+#+END_SRC
+It is not beautiful, but perhaps we can think up a clever cleanup (or a clever prophylactic) another time.
+* Queries
+So our bosses heard we have a lot of problems and want the executive summary. How do they want that? Well first they want a single report that says:
+- how many of our customer orders had issues,
+- how many did not have any issues, and
+- how many we are still waiting to receive comment on
+But they want all this in a single query, so we have to be a little careful. 
+** Aggregating our data
+Let's first get all of our customer complaints onto a single row for each order. We can use GROUP_CONCAT to group our issues by order. Here's a selection:
+#+BEGIN_SRC sql
+SELECT order_id, GROUP_CONCAT(issue) AS order_issues FROM customer_complaints GROUP BY order_id;
++----------+----------------------------------------------------------+
+| order_id | order_issues                                             |
++----------+----------------------------------------------------------+
+|        6 | unpalatable repast                                       |
+|        7 | tardy conveyance                                         |
+|       10 | none                                                     |
+|       11 | churlish servitor                                        |
+|       17 | clamourous mastication                                   |
+|       18 | slovenly decor                                           |
+|       21 | clamourous mastication,churlish servitor                 |
+#+END_SRC
+That makes it easier to do some clever counting. The next clever thing is combining the SUM and IF functions. First, let's do a quick walkthrough.
+**** Using IF
+The IF function takes 3 expressions as arguments, evaluating the first expression as true or false and then executing the second or third expression depending on the result. Let's see an example.
+#+BEGIN_SRC sql
+SELECT IF(2>1, 'true!', 'false!') as result;
++--------+
+| result |
++--------+
+| true!  |
++--------+
+#+END_SRC
+And the converse:
+#+BEGIN_SRC sql
+SELECT IF(1>2, 'true!', 'false!') as result;
++--------+
+| result |
++--------+
+| false! |
++--------+
+#+END_SRC
+If we want to use this in our query, we need to operate on columns. Here's an example of evaluating a column using a subquery:
+#+BEGIN_SRC sql
+ SELECT IF(sub.x > 1, 'true!', 'false!') AS result FROM (SELECT 5 AS x) AS sub;
++--------+
+| result |
++--------+
+| true!  |
++--------+
+#+END_SRC
+**** Adding in some SUM
+All this IF magic can be combined with the SUM function to give us condition-based counting, where we count a row if one of its fields matches a target value. We do this by passing in 1 and 0 to our IF function. When the condition is true, the row will be evaluated as 1, when false, it will be evaluated as 0. So SUM will only count the truthy rows! 
+
+We need to do the SUM and IF functions in a top-level query, using the clever GROUP CONCAT query as our source. It looks like this:
+#+BEGIN_SRC sql
+SELECT SUM(IF(order_issues.issues != 'none', 1, 0)) AS orders_with_problems, SUM(IF(order_issues.issues = 'none', 1, 0)) AS orders_without_problems FROM (SELECT order_id, GROUP_CONCAT(issue) AS issues FROM customer_complaints GROUP BY order_id) AS order_issues;
++----------------------+-------------------------+
+| orders_with_problems | orders_without_problems |
++----------------------+-------------------------+
+|                   39 |                       6 |
++----------------------+-------------------------+
+#+END_SRC
+*** The missing NULLs
+Job done, right? Wrong! We missed one field! The diner managers asked us to include the number of orders that we haven't received information for in our query. Darn! So how do we get that? Well, let's start by connecting our orders table to our complaints table to see which orders do not have any information about dining mishaps or the lack thereof. Right, so let's see here.
+
+First we do a RIGHT JOIN on the tables. This means that we can join rows that do not exist in both places. /But/ we also need to specify the orders.id field in our SELECT statement. This ensures that we will get rows for all of our orders. There's the query with some sample results.
+#+BEGIN_SRC sql
+SELECT orders.id, GROUP_CONCAT(issue) AS issues FROM customer_complaints RIGHT JOIN orders ON orders.id = customer_complaints.order_id GROUP BY orders.id;
++-----+----------------------------------------------------------+
+| id  | order_issues                                             |
++-----+----------------------------------------------------------+
+|   1 | NULL                                                     |
+|   2 | NULL                                                     |
+|   3 | NULL                                                     |
+|   4 | NULL                                                     |
+|   5 | NULL                                                     |
+|   6 | unpalatable repast                                       |
+|   7 | tardy conveyance                                         |
+#+END_SRC
+So this will give us the data we need for our counting queries.
+*** Putting it all together
+So let's swap in that improved sub-query and then add a check for the NULLs to our top-level query. This will give us the complete report. Oh, we should also add an IS NOT NULL to our orders with problems to be sure we don't double-count.
+#+BEGIN_SRC sql
+SELECT SUM(IF(order_issues.issues != 'none' AND order_issues.issues IS NOT NULL, 1, 0)) AS orders_with_problems, 
+-> SUM(IF(order_issues.issues = 'none', 1, 0)) AS orders_without_problems, 
+-> SUM(IF(order_issues.issues IS NULL, 1, 0)) AS orders_without_information 
+-> FROM (SELECT orders.id, 
+->       GROUP_CONCAT(issue) AS issues 
+->       FROM customer_complaints 
+->       RIGHT JOIN orders ON orders.id = customer_complaints.order_id 
+->       GROUP BY orders.id
+-> ) AS order_issues;
++----------------------+-------------------------+----------------------------+
+| orders_with_problems | orders_without_problems | orders_without_information |
++----------------------+-------------------------+----------------------------+
+|                   39 |                       6 |                         56 |
++----------------------+-------------------------+----------------------------+
+#+END_SRC
+Now we have everything we need to make Grumpy Diners great again. Or at least less awful!
